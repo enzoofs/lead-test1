@@ -223,6 +223,18 @@ class LeadPipeline:
             f"limit={limit_per_category}"
         )
 
+        # Testar conexao Airtable ANTES de gastar API calls
+        if self.airtable:
+            logger.info("Testando conexao com Airtable...")
+            if not self.airtable.test_connection():
+                logger.error(
+                    "ABORTANDO: Airtable sem permissao. "
+                    "Corrija as permissoes do token antes de executar. "
+                    "Use --no-airtable para rodar sem sincronizar."
+                )
+                results["error"] = "Airtable permission denied (403)"
+                return results
+
         # Stage 1: Scraping
         if resume_stage < 1:
             logger.info("=== Stage 1: Scraping Google Maps ===")

@@ -73,6 +73,35 @@ class AirtableSync:
 
         logger.info(f"Airtable conectado: {self.base_id}/{self.table_name}")
 
+    def test_connection(self) -> bool:
+        """
+        Testa conexao e permissoes do Airtable antes de iniciar o pipeline.
+        Retorna True se tudo OK, False se ha problemas.
+        """
+        try:
+            # Tenta listar 1 registro para verificar permissoes
+            self.table.all(max_records=1)
+            logger.info("Airtable: conexao e permissoes OK")
+            return True
+        except Exception as e:
+            error_str = str(e)
+            if "403" in error_str or "INVALID_PERMISSIONS" in error_str:
+                logger.error(
+                    "Airtable: ERRO DE PERMISSAO (403). "
+                    "Verifique se o token tem as permissoes: "
+                    "data.records:read, data.records:write "
+                    "e se a base esta adicionada ao token. "
+                    "Acesse: https://airtable.com/create/tokens"
+                )
+            elif "404" in error_str or "NOT_FOUND" in error_str:
+                logger.error(
+                    f"Airtable: Base ou tabela nao encontrada. "
+                    f"Base ID: {self.base_id}, Tabela: {self.table_name}"
+                )
+            else:
+                logger.error(f"Airtable: Erro de conexao: {e}")
+            return False
+
     def _lead_to_record(self, lead: Lead) -> dict:
         """Converte Lead para registro Airtable"""
         record = {
