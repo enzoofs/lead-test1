@@ -359,6 +359,14 @@ class LeadPipeline:
                 self.cache.add_many(leads)
                 logger.info(f"Cache atualizado: {self.cache.get_stats()['total_cached']} leads")
 
+        # Stage 7: Exportar Excel
+        logger.info("=== Stage 7: Exportacao Excel ===")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        excel_path = f"data/leads_{timestamp}.xlsx"
+        Path("data").mkdir(parents=True, exist_ok=True)
+        self.export_to_excel(leads, excel_path)
+        results["excel_file"] = excel_path
+
         # Finalizar
         duration = time.time() - start_time
         results["duration_seconds"] = duration
@@ -413,6 +421,196 @@ class LeadPipeline:
                     lead.score,
                     lead.classificacao,
                 ])
+
+        logger.info(f"CSV exportado para {filepath}")
+
+    def export_to_excel(self, leads: list[Lead], filepath: str):
+        """
+        Exporta leads para Excel (.xlsx) com formatacao profissional
+
+        Gera planilha com:
+        - Abas separadas: Todos os Leads, Hot, Warm, Cold
+        - Cores por classificacao
+        - Filtros automaticos
+        - Largura de colunas ajustada
+        """
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.utils import get_column_letter
+        except ImportError:
+            logger.error(
+                "openpyxl nao instalado. Instale com: pip install openpyxl"
+            )
+            # Fallback para CSV
+            csv_path = filepath.replace(".xlsx", ".csv")
+            logger.info(f"Exportando como CSV: {csv_path}")
+            self.export_to_csv(leads, csv_path)
+            return csv_path
+
+        wb = Workbook()
+
+        # Estilos
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        header_fill = PatternFill(start_color="2B579A", end_color="2B579A", fill_type="solid")
+        header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        hot_fill = PatternFill(start_color="E74C3C", end_color="E74C3C", fill_type="solid")
+        hot_font = Font(bold=True, color="FFFFFF")
+        warm_fill = PatternFill(start_color="F39C12", end_color="F39C12", fill_type="solid")
+        warm_font = Font(bold=True, color="FFFFFF")
+        cold_fill = PatternFill(start_color="3498DB", end_color="3498DB", fill_type="solid")
+        cold_font = Font(bold=True, color="FFFFFF")
+        low_fill = PatternFill(start_color="95A5A6", end_color="95A5A6", fill_type="solid")
+        low_font = Font(color="FFFFFF")
+
+        thin_border = Border(
+            left=Side(style="thin"),
+            right=Side(style="thin"),
+            top=Side(style="thin"),
+            bottom=Side(style="thin"),
+        )
+
+        columns = [
+            ("Nome", 35),
+            ("Categoria", 22),
+            ("Classificacao", 15),
+            ("Score", 10),
+            ("Telefone", 18),
+            ("Email", 30),
+            ("Endereco", 40),
+            ("Cidade", 18),
+            ("Site", 35),
+            ("Instagram", 30),
+            ("LinkedIn", 30),
+            ("Rating", 10),
+            ("Num Reviews", 13),
+            ("Status", 15),
+            ("Data Captura", 18),
+        ]
+
+        def _lead_to_row(lead: Lead) -> list:
+            return [
+                lead.nome,
+                lead.categoria,
+                lead.classificacao,
+                lead.score,
+                lead.telefone or "",
+                lead.email or "",
+                lead.endereco or "",
+                lead.cidade,
+                lead.site or "",
+                lead.social.instagram or "",
+                lead.social.linkedin or "",
+                lead.google_maps.rating or "",
+                lead.google_maps.num_reviews or "",
+                lead.status,
+                lead.data_captura.strftime("%Y-%m-%d %H:%M") if lead.data_captura else "",
+            ]
+
+        def _write_sheet(ws, sheet_leads: list[Lead]):
+            # Header
+            for col_idx, (col_name, col_width) in enumerate(columns, 1):
+                cell = ws.cell(row=1, column=col_idx, value=col_name)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = header_alignment
+                cell.border = thin_border
+                ws.column_dimensions[get_column_letter(col_idx)].width = col_width
+
+            # Dados
+            for row_idx, lead in enumerate(sheet_leads, 2):
+                row_data = _lead_to_row(lead)
+                for col_idx, value in enumerate(row_data, 1):
+                    cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                    cell.border = thin_border
+                    cell.alignment = Alignment(vertical="center")
+
+                # Cor da classificacao (coluna 3)
+                class_cell = ws.cell(row=row_idx, column=3)
+                score_cell = ws.cell(row=row_idx, column=4)
+                if lead.classificacao == "hot":
+                    class_cell.fill = hot_fill
+                    class_cell.font = hot_font
+                    score_cell.fill = hot_fill
+                    score_cell.font = hot_font
+                elif lead.classificacao == "warm":
+                    class_cell.fill = warm_fill
+                    class_cell.font = warm_font
+                    score_cell.fill = warm_fill
+                    score_cell.font = warm_font
+                elif lead.classificacao == "cold":
+                    class_cell.fill = cold_fill
+                    class_cell.font = cold_font
+                elif lead.classificacao == "low":
+                    class_cell.fill = low_fill
+                    class_cell.font = low_font
+
+            # Filtros automaticos
+            if sheet_leads:
+                last_col = get_column_letter(len(columns))
+                ws.auto_filter.ref = f"A1:{last_col}{len(sheet_leads) + 1}"
+
+            # Congelar primeira linha
+            ws.freeze_panes = "A2"
+
+        # Aba 1: Todos os leads (ordenados por score decrescente)
+        ws_all = wb.active
+        ws_all.title = "Todos os Leads"
+        sorted_leads = sorted(leads, key=lambda l: l.score, reverse=True)
+        _write_sheet(ws_all, sorted_leads)
+
+        # Aba 2: Hot leads
+        hot_leads = [l for l in sorted_leads if l.classificacao == "hot"]
+        if hot_leads:
+            ws_hot = wb.create_sheet("Hot Leads")
+            _write_sheet(ws_hot, hot_leads)
+
+        # Aba 3: Warm leads
+        warm_leads = [l for l in sorted_leads if l.classificacao == "warm"]
+        if warm_leads:
+            ws_warm = wb.create_sheet("Warm Leads")
+            _write_sheet(ws_warm, warm_leads)
+
+        # Aba 4: Resumo
+        ws_summary = wb.create_sheet("Resumo")
+        summary_data = [
+            ("Metrica", "Valor"),
+            ("Total de Leads", len(leads)),
+            ("Leads Hot", len(hot_leads)),
+            ("Leads Warm", len(warm_leads)),
+            ("Leads Cold", len([l for l in leads if l.classificacao == "cold"])),
+            ("Leads Low", len([l for l in leads if l.classificacao == "low"])),
+            ("", ""),
+            ("Score Medio", round(sum(l.score for l in leads) / len(leads), 1) if leads else 0),
+            ("Com Telefone", sum(1 for l in leads if l.telefone)),
+            ("Com Email", sum(1 for l in leads if l.email)),
+            ("Com Site", sum(1 for l in leads if l.site)),
+            ("Com Instagram", sum(1 for l in leads if l.social.instagram)),
+            ("Com LinkedIn", sum(1 for l in leads if l.social.linkedin)),
+        ]
+
+        for row_idx, (metric, value) in enumerate(summary_data, 1):
+            cell_a = ws_summary.cell(row=row_idx, column=1, value=metric)
+            cell_b = ws_summary.cell(row=row_idx, column=2, value=value)
+            cell_a.border = thin_border
+            cell_b.border = thin_border
+            if row_idx == 1:
+                cell_a.font = header_font
+                cell_a.fill = header_fill
+                cell_b.font = header_font
+                cell_b.fill = header_fill
+
+        ws_summary.column_dimensions["A"].width = 20
+        ws_summary.column_dimensions["B"].width = 15
+
+        # Salvar
+        wb.save(filepath)
+        logger.info(
+            f"Excel exportado: {filepath} "
+            f"({len(leads)} leads, {len(hot_leads)} hot, {len(warm_leads)} warm)"
+        )
+        return filepath
 
         logger.info(f"Exportado para {filepath}")
 
