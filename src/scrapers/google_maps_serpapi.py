@@ -13,6 +13,8 @@ from config.settings import (
     SEARCH_LANGUAGE,
     SEARCH_COUNTRY,
     REQUESTS_PER_MINUTE,
+    BH_NEIGHBORHOODS,
+    CATEGORY_SYNONYMS,
 )
 from src.models import Lead, SearchQuery, ScrapingResult, GoogleMapsData
 
@@ -138,14 +140,17 @@ class GoogleMapsSerpAPI:
         return lead
 
     def search_all_categories(
-        self, categories: list[str], limit_per_category: int = 20
+        self, categories: list[str], limit_per_category: int = 20,
+        use_variations: bool = True, max_neighborhoods: int = 5,
     ) -> list[Lead]:
         """
-        Busca em todas as categorias configuradas
+        Busca em todas as categorias configuradas com variacoes de busca
 
         Args:
             categories: Lista de tipos de negocios
             limit_per_category: Maximo de leads por categoria
+            use_variations: Usar bairros e sinonimos para encontrar mais leads
+            max_neighborhoods: Maximo de bairros para buscar por categoria
 
         Returns:
             Lista consolidada de leads
@@ -153,17 +158,15 @@ class GoogleMapsSerpAPI:
         all_leads = []
 
         for category in categories:
+            # Busca principal
             logger.info(f"Buscando categoria: {category}")
-
             query = SearchQuery(
                 query=category,
                 location=SEARCH_LOCATION,
                 category=category,
                 limit=limit_per_category,
             )
-
             result = self.search(query)
-
             if result.success:
                 all_leads.extend(result.leads)
                 logger.info(
@@ -173,6 +176,41 @@ class GoogleMapsSerpAPI:
                 logger.warning(
                     f"Erros na categoria {category}: {result.errors}"
                 )
+
+            if not use_variations:
+                continue
+
+            # Busca por bairros para encontrar leads diferentes
+            neighborhoods = BH_NEIGHBORHOODS[:max_neighborhoods]
+            for bairro in neighborhoods:
+                query_bairro = SearchQuery(
+                    query=f"{category} {bairro}",
+                    location=SEARCH_LOCATION,
+                    category=category,
+                    limit=limit_per_category,
+                )
+                result_bairro = self.search(query_bairro)
+                if result_bairro.success and result_bairro.leads:
+                    all_leads.extend(result_bairro.leads)
+                    logger.info(
+                        f"  Bairro {bairro}: {len(result_bairro.leads)} leads"
+                    )
+
+            # Busca por sinonimos da categoria
+            synonyms = CATEGORY_SYNONYMS.get(category, [])
+            for synonym in synonyms:
+                query_syn = SearchQuery(
+                    query=synonym,
+                    location=SEARCH_LOCATION,
+                    category=category,
+                    limit=limit_per_category,
+                )
+                result_syn = self.search(query_syn)
+                if result_syn.success and result_syn.leads:
+                    all_leads.extend(result_syn.leads)
+                    logger.info(
+                        f"  Sinonimo '{synonym}': {len(result_syn.leads)} leads"
+                    )
 
         # Remover duplicatas por nome + endereco
         unique_leads = self._deduplicate(all_leads)

@@ -116,6 +116,25 @@ def main():
         help="Exportar cache para CSV",
     )
 
+    parser.add_argument(
+        "--no-variations",
+        action="store_true",
+        help="Desativar buscas por bairros e sinonimos (menos resultados, menos API calls)",
+    )
+
+    parser.add_argument(
+        "--max-neighborhoods",
+        type=int,
+        default=5,
+        help="Maximo de bairros para buscar por categoria (default: 5)",
+    )
+
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Retomar execucao anterior a partir do ultimo checkpoint",
+    )
+
     args = parser.parse_args()
 
     # Listar categorias
@@ -169,6 +188,10 @@ def main():
     logger.info(f"Hunter.io: {args.hunter}")
     logger.info(f"Airtable: {sync_airtable}")
     logger.info(f"Cache: {use_cache}")
+    logger.info(f"Variacoes (bairros/sinonimos): {not args.no_variations}")
+    logger.info(f"Max bairros: {args.max_neighborhoods}")
+    if args.resume:
+        logger.info("MODO RESUME: Retomando do ultimo checkpoint")
     if args.test:
         logger.info("MODO TESTE: 1 categoria, 5 leads, sem Airtable")
     logger.info("=" * 60)
@@ -179,12 +202,15 @@ def main():
         use_hunter=args.hunter,
         sync_to_airtable=sync_airtable,
         use_cache=use_cache,
+        use_variations=not args.no_variations,
+        max_neighborhoods=args.max_neighborhoods,
     )
 
     try:
         results = pipeline.run(
             categories=categories,
             limit_per_category=limit,
+            resume=args.resume,
         )
 
         # Exibir resumo
