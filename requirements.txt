@@ -1,0 +1,33 @@
+# Core
+python-dotenv==1.0.0
+requests==2.31.0
+aiohttp==3.9.1
+asyncio==3.4.3
+
+# Scraping
+beautifulsoup4==4.12.2
+lxml==4.9.3
+playwright==1.40.0
+httpx==0.25.2
+
+# Data Processing
+pandas==2.1.4
+pydantic==2.5.2
+
+# Airtable Integration
+pyairtable==2.2.1
+
+# Rate Limiting & Retry
+tenacity==8.2.3
+ratelimit==2.2.1
+
+# Logging
+structlog==23.2.0
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-mock==3.12.0
+
+# Optional: SerpAPI
+google-search-results==2.4.2
