@@ -154,6 +154,7 @@ def main():
     # Configurar pipeline
     limit = 5 if args.test else args.limit
     sync_airtable = not (args.test or args.no_airtable)
+    use_cache = not args.no_cache
 
     # Calcular estimativa
     estimated_leads = len(categories) * limit
@@ -171,9 +172,6 @@ def main():
     if args.test:
         logger.info("MODO TESTE: 1 categoria, 5 leads, sem Airtable")
     logger.info("=" * 60)
-
-    # Configurar cache
-    use_cache = not args.no_cache
 
     # Criar e executar pipeline
     pipeline = LeadPipeline(
