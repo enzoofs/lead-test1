@@ -94,3 +94,98 @@ PRIORITY_CATEGORIES = [
     "imobiliaria",
 ]
 PRIORITY_BONUS = 5
+
+
+# Bairros de Belo Horizonte para variar buscas
+BH_NEIGHBORHOODS = [
+    "Savassi",
+    "Funcionarios",
+    "Lourdes",
+    "Serra",
+    "Santo Agostinho",
+    "Buritis",
+    "Belvedere",
+    "Mangabeiras",
+    "Pampulha",
+    "Santa Efigenia",
+    "Centro",
+    "Gutierrez",
+    "Cidade Nova",
+    "Floresta",
+    "Santa Lucia",
+    "Sion",
+    "Anchieta",
+    "Barroca",
+    "Jardim America",
+    "Nova Suica",
+    "Luxemburgo",
+    "Castelo",
+    "Ouro Preto",
+    "Santa Monica",
+    "Padre Eustaquio",
+    "Carlos Prates",
+    "Caiçaras",
+    "Nova Granada",
+    "Sagrada Familia",
+    "Horto",
+]
+
+
+# Sinonimos e variacoes de busca por categoria
+CATEGORY_SYNONYMS = {
+    "clinica medica": [
+        "consultorio medico",
+        "centro medico",
+        "policlinica",
+    ],
+    "clinica odontologica": [
+        "dentista",
+        "consultorio odontologico",
+        "consultorio dentario",
+    ],
+    "escritorio advocacia": [
+        "advogado",
+        "advocacia",
+        "escritorio de direito",
+    ],
+    "escritorio contabilidade": [
+        "contador",
+        "contabilidade",
+        "escritorio contabil",
+    ],
+    "imobiliaria": [
+        "corretor de imoveis",
+        "imobiliaria venda",
+        "imobiliaria aluguel",
+    ],
+    "academia": [
+        "academia de musculacao",
+        "crossfit",
+        "studio de pilates",
+    ],
+    "restaurante": [
+        "restaurante self service",
+        "restaurante executivo",
+        "bar e restaurante",
+    ],
+    "pet shop": [
+        "veterinaria",
+        "clinica veterinaria",
+        "banho e tosa",
+    ],
+    "salao de beleza": [
+        "barbearia",
+        "studio de beleza",
+        "cabeleireiro",
+    ],
+    "loja de roupas": [
+        "boutique",
+        "loja de moda",
+        "moda feminina",
+    ],
+    "escola particular": [
+        "colegio particular",
+        "escola infantil",
+        "curso de idiomas",
+    ],
+}
