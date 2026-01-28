@@ -98,6 +98,24 @@ def main():
         help="Listar categorias disponiveis",
     )
 
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Desativar cache (processar todos os leads, mesmo duplicados)",
+    )
+
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Limpar cache antes de executar",
+    )
+
+    parser.add_argument(
+        "--export-cache",
+        type=str,
+        help="Exportar cache para CSV",
+    )
+
     args = parser.parse_args()
 
     # Listar categorias
@@ -107,11 +125,29 @@ def main():
             print(f"  {i}. {cat}")
         return
 
+    # Exportar cache
+    if args.export_cache:
+        from src.cache import LeadCache
+        cache = LeadCache()
+        cache.export_to_csv(args.export_cache)
+        print(f"Cache exportado para: {args.export_cache}")
+        return
+
+    # Limpar cache
+    if args.clear_cache:
+        from src.cache import LeadCache
+        cache = LeadCache()
+        cache.clear()
+        print("Cache limpo!")
+
     # Determinar categorias
     if args.category:
         categories = [args.category]
     elif args.categories:
         categories = args.categories
+    elif args.test:
+        # Modo teste: apenas 1 categoria para ser rapido
+        categories = [BUSINESS_TYPES[0]]  # clinica medica
     else:
         categories = BUSINESS_TYPES
 
@@ -119,21 +155,32 @@ def main():
     limit = 5 if args.test else args.limit
     sync_airtable = not (args.test or args.no_airtable)
 
+    # Calcular estimativa
+    estimated_leads = len(categories) * limit
+
     logger.info("=" * 60)
     logger.info("Sistema de Captacao de Leads B2B - TimeLabs")
     logger.info("=" * 60)
     logger.info(f"Categorias: {len(categories)}")
     logger.info(f"Limite por categoria: {limit}")
+    logger.info(f"Leads estimados: ~{estimated_leads}")
     logger.info(f"SerpAPI: {not args.no_serpapi}")
     logger.info(f"Hunter.io: {args.hunter}")
     logger.info(f"Airtable: {sync_airtable}")
+    logger.info(f"Cache: {use_cache}")
+    if args.test:
+        logger.info("MODO TESTE: 1 categoria, 5 leads, sem Airtable")
     logger.info("=" * 60)
+
+    # Configurar cache
+    use_cache = not args.no_cache
 
     # Criar e executar pipeline
     pipeline = LeadPipeline(
         use_serpapi=not args.no_serpapi,
         use_hunter=args.hunter,
         sync_to_airtable=sync_airtable,
+        use_cache=use_cache,
     )
 
     try:
@@ -163,6 +210,9 @@ def main():
 
             if "social_extraction" in stages:
                 social = stages["social_extraction"]
+                print(f"\nDados de contato encontrados:")
+                print(f"  Telefones: {social.get('telefones', 0)}")
+                print(f"  Emails:    {social.get('emails', 0)}")
                 print(f"\nRedes sociais encontradas:")
                 print(f"  Instagram: {social.get('instagram', 0)}")
                 print(f"  LinkedIn:  {social.get('linkedin', 0)}")
