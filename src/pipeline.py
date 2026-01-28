@@ -19,6 +19,7 @@ from src.scrapers import GoogleMapsSerpAPI, GoogleMapsScraper
 from src.enrichers import SocialMediaExtractor, WebsiteAnalyzer, HunterEnricher
 from src.scoring import LeadScorer
 from src.integrations import AirtableSync
+from src.cache import LeadCache
 
 logger = structlog.get_logger()
 
@@ -41,6 +42,7 @@ class LeadPipeline:
         use_serpapi: bool = True,
         use_hunter: bool = False,
         sync_to_airtable: bool = True,
+        use_cache: bool = True,
     ):
         """
         Inicializa pipeline
@@ -49,10 +51,12 @@ class LeadPipeline:
             use_serpapi: Usar SerpAPI (recomendado) ou scraping direto
             use_hunter: Usar Hunter.io para enriquecimento
             sync_to_airtable: Sincronizar resultados com Airtable
+            use_cache: Usar cache para evitar duplicatas entre execucoes
         """
         self.use_serpapi = use_serpapi
         self.use_hunter = use_hunter
         self.sync_to_airtable = sync_to_airtable
+        self.use_cache = use_cache
 
         # Inicializar componentes
         self._init_components()
@@ -99,6 +103,14 @@ class LeadPipeline:
         else:
             self.airtable = None
 
+        # Cache
+        if self.use_cache:
+            self.cache = LeadCache()
+            stats = self.cache.get_stats()
+            logger.info(f"Cache ativo: {stats['total_cached']} leads em cache")
+        else:
+            self.cache = None
+
     def run(
         self,
         categories: Optional[list[str]] = None,
@@ -133,14 +145,26 @@ class LeadPipeline:
         leads = self.scraper.search_all_categories(
             categories, limit_per_category
         )
+        total_scraped = len(leads)
         results["stages"]["scraping"] = {
-            "leads_found": len(leads),
+            "leads_found": total_scraped,
         }
-        logger.info(f"Scraping: {len(leads)} leads encontrados")
+        logger.info(f"Scraping: {total_scraped} leads encontrados")
 
         if not leads:
             logger.warning("Nenhum lead encontrado, encerrando")
             return results
+
+        # Filtrar duplicatas usando cache
+        if self.cache:
+            leads = self.cache.filter_new(leads)
+            results["stages"]["scraping"]["new_leads"] = len(leads)
+            results["stages"]["scraping"]["cached_skipped"] = total_scraped - len(leads)
+
+            if not leads:
+                logger.info("Todos os leads ja estao em cache")
+                results["total_leads"] = 0
+                return results
 
         # Stage 2: Analise de websites
         logger.info("=== Stage 2: Analise de Websites ===")
@@ -152,18 +176,28 @@ class LeadPipeline:
         }
         logger.info(f"Websites: {sites_ativos} sites ativos")
 
-        # Stage 3: Extracao de redes sociais
-        logger.info("=== Stage 3: Extracao de Redes Sociais ===")
+        # Stage 3: Extracao de redes sociais, emails e telefones
+        logger.info("=== Stage 3: Extracao de Redes Sociais, Emails e Telefones ===")
         leads = self.social_extractor.enrich_leads(leads)
+
+        # Contar resultados
         instagram_count = sum(1 for l in leads if l.social.instagram)
         linkedin_count = sum(1 for l in leads if l.social.linkedin)
+        email_count = sum(1 for l in leads if l.email)
+        telefone_count = sum(1 for l in leads if l.telefone)
+
         results["stages"]["social_extraction"] = {
             "instagram": instagram_count,
             "linkedin": linkedin_count,
+            "emails": email_count,
+            "telefones": telefone_count,
         }
         logger.info(
             f"Redes sociais: {instagram_count} Instagram, "
             f"{linkedin_count} LinkedIn"
+        )
+        logger.info(
+            f"Contato: {email_count} emails, {telefone_count} telefones"
         )
 
         # Stage 4: Enriquecimento Hunter.io (opcional)
@@ -195,6 +229,11 @@ class LeadPipeline:
                 f"Airtable: {sync_result['created']} criados, "
                 f"{sync_result['updated']} atualizados"
             )
+
+        # Salvar leads no cache
+        if self.cache:
+            self.cache.add_many(leads)
+            logger.info(f"Cache atualizado: {self.cache.get_stats()['total_cached']} leads")
 
         # Finalizar
         duration = time.time() - start_time

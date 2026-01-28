@@ -1,11 +1,14 @@
 """
-Extrator de redes sociais a partir do site do lead
+Extrator de redes sociais, emails e telefones a partir do site do lead
 
-Este modulo visita o site do lead e extrai links para redes sociais.
-E a forma mais eficiente e gratuita de obter esses dados.
+Este modulo visita o site do lead e extrai:
+- Links para redes sociais (Instagram, LinkedIn, Facebook, etc)
+- Emails (mailto: e texto)
+- Telefones (links tel: e texto)
 """
 import re
 import time
+import ssl
 import structlog
 import httpx
 from typing import Optional
@@ -21,13 +24,14 @@ logger = structlog.get_logger()
 
 class SocialMediaExtractor:
     """
-    Extrai perfis de redes sociais do site do lead
+    Extrai perfis de redes sociais, emails e telefones do site do lead
 
     Estrategia:
-    1. Visita o site principal
-    2. Procura links para redes sociais no HTML
-    3. Verifica paginas comuns (contato, sobre)
-    4. Extrai e valida os perfis encontrados
+    1. Verifica se o "site" e na verdade um link do Instagram
+    2. Visita o site principal
+    3. Procura links para redes sociais no HTML
+    4. Extrai emails e telefones do HTML
+    5. Verifica paginas comuns (contato, sobre)
     """
 
     # Padroes de URLs de redes sociais
@@ -58,7 +62,22 @@ class SocialMediaExtractor:
         ],
     }
 
-    # Paginas comuns onde encontrar redes sociais
+    # Padroes para extrair emails do texto
+    EMAIL_PATTERNS = [
+        r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
+    ]
+
+    # Padroes para extrair telefones brasileiros
+    PHONE_PATTERNS = [
+        # Formato com DDD: (31) 99999-9999 ou (31) 3333-3333
+        r'\(?\d{2}\)?\s*\d{4,5}[-.\s]?\d{4}',
+        # Formato internacional: +55 31 99999-9999
+        r'\+55\s*\d{2}\s*\d{4,5}[-.\s]?\d{4}',
+        # Links tel:
+        r'tel:[\+\d\s\-\(\)]+',
+    ]
+
+    # Paginas comuns onde encontrar redes sociais e contato
     COMMON_PAGES = [
         "",  # Homepage
         "/contato",
@@ -68,7 +87,18 @@ class SocialMediaExtractor:
         "/fale-conosco",
     ]
 
+    # Dominios de redes sociais (para detectar quando site e rede social)
+    SOCIAL_DOMAINS = [
+        "instagram.com", "instagr.am",
+        "facebook.com", "fb.com",
+        "linkedin.com",
+        "twitter.com", "x.com",
+        "wa.me", "whatsapp.com",
+        "l.instagram.com",  # Redirect do Instagram
+    ]
+
     def __init__(self):
+        # Criar cliente HTTP com tolerancia a erros SSL
         self.session = httpx.Client(
             timeout=TIMEOUT_SECONDS,
             headers={
@@ -77,6 +107,7 @@ class SocialMediaExtractor:
                 "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
             },
             follow_redirects=True,
+            verify=False,  # Tolerar certificados invalidos
         )
 
     def __del__(self):
@@ -97,15 +128,32 @@ class SocialMediaExtractor:
             logger.warning(f"Erro ao buscar {url}: {e}")
         return None
 
+    def _is_social_media_url(self, url: str) -> bool:
+        """Verifica se a URL e de uma rede social"""
+        if not url:
+            return False
+        url_lower = url.lower()
+        return any(domain in url_lower for domain in self.SOCIAL_DOMAINS)
+
+    def _extract_instagram_from_url(self, url: str) -> Optional[str]:
+        """Extrai username do Instagram de uma URL"""
+        for pattern in self.SOCIAL_PATTERNS["instagram"]:
+            match = re.search(pattern, url, re.IGNORECASE)
+            if match:
+                username = match.group(1)
+                if username not in ["p", "reel", "stories", "explore", ""]:
+                    return username
+        return None
+
     def extract(self, lead: Lead) -> Lead:
         """
-        Extrai redes sociais do site do lead
+        Extrai redes sociais, email e telefone do site do lead
 
         Args:
             lead: Lead com site preenchido
 
         Returns:
-            Lead atualizado com perfis sociais
+            Lead atualizado com perfis sociais, email e telefone
         """
         if not lead.site:
             logger.debug(f"Lead {lead.nome} sem site, pulando")
@@ -115,6 +163,20 @@ class SocialMediaExtractor:
 
         social = SocialProfiles()
         all_links = set()
+        all_text = ""
+
+        # Verificar se o "site" e na verdade um link do Instagram
+        if self._is_social_media_url(lead.site):
+            instagram_user = self._extract_instagram_from_url(lead.site)
+            if instagram_user:
+                social.instagram = f"https://instagram.com/{instagram_user}"
+                logger.info(f"Site e Instagram: @{instagram_user}")
+
+            # Marcar que nao tem site real
+            lead.site_ativo = False
+            lead.social = social
+            lead.social_enriched = True
+            return lead
 
         # Normalizar URL base
         base_url = self._normalize_url(lead.site)
@@ -128,15 +190,27 @@ class SocialMediaExtractor:
                 links = self._extract_links(html, base_url)
                 all_links.update(links)
 
+                # Acumular texto para extrair emails/telefones
+                try:
+                    soup = BeautifulSoup(html, "lxml")
+                    all_text += " " + soup.get_text(separator=" ")
+                except Exception:
+                    pass
+
             time.sleep(0.5)  # Rate limiting
 
         # Processar links encontrados
         social = self._parse_social_links(all_links)
 
-        # Tentar extrair email tambem
-        email = self._extract_email(all_links)
+        # Extrair email (de mailto: ou do texto)
+        email = self._extract_email(all_links, all_text)
         if email and not lead.email:
             lead.email = email
+
+        # Extrair telefone do texto
+        telefone = self._extract_phone(all_links, all_text)
+        if telefone and not lead.telefone:
+            lead.telefone = telefone
 
         # Atualizar lead
         lead.social = social
@@ -145,7 +219,7 @@ class SocialMediaExtractor:
 
         logger.info(
             f"Lead {lead.nome}: Instagram={social.instagram}, "
-            f"LinkedIn={social.linkedin}"
+            f"LinkedIn={social.linkedin}, Email={lead.email}, Tel={lead.telefone}"
         )
 
         return lead
@@ -247,15 +321,129 @@ class SocialMediaExtractor:
 
         return social
 
-    def _extract_email(self, links: set[str]) -> Optional[str]:
-        """Extrai email dos links mailto:"""
+    def _extract_email(self, links: set[str], text: str = "") -> Optional[str]:
+        """
+        Extrai email de:
+        1. Links mailto:
+        2. Texto da pagina
+
+        Prioriza emails corporativos (contato@, comercial@, etc)
+        """
+        found_emails = []
+
+        # 1. Buscar em links mailto:
         for link in links:
             if link.startswith("mailto:"):
-                email = link.replace("mailto:", "").split("?")[0]
+                email = link.replace("mailto:", "").split("?")[0].strip()
                 if "@" in email and "." in email:
-                    return email.lower()
+                    found_emails.append(email.lower())
 
-        return None
+        # 2. Buscar no texto da pagina
+        for pattern in self.EMAIL_PATTERNS:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for email in matches:
+                email = email.lower().strip()
+                # Filtrar emails invalidos
+                if self._is_valid_email(email):
+                    found_emails.append(email)
+
+        if not found_emails:
+            return None
+
+        # Remover duplicatas mantendo ordem
+        found_emails = list(dict.fromkeys(found_emails))
+
+        # Priorizar emails corporativos
+        priority_prefixes = ["contato", "comercial", "info", "atendimento", "vendas", "sac"]
+        for email in found_emails:
+            prefix = email.split("@")[0]
+            if any(p in prefix for p in priority_prefixes):
+                return email
+
+        # Retornar primeiro email encontrado
+        return found_emails[0] if found_emails else None
+
+    def _is_valid_email(self, email: str) -> bool:
+        """Valida se email parece legitimo"""
+        if not email or "@" not in email:
+            return False
+
+        # Ignorar emails de exemplo ou placeholders
+        invalid_patterns = [
+            "example.com", "teste.com", "email.com",
+            "seudominio", "yourdomain", "domain.com",
+            ".png", ".jpg", ".gif", ".css", ".js",
+            "wixpress", "wordpress",
+        ]
+        return not any(p in email.lower() for p in invalid_patterns)
+
+    def _extract_phone(self, links: set[str], text: str = "") -> Optional[str]:
+        """
+        Extrai telefone de:
+        1. Links tel:
+        2. Texto da pagina
+
+        Formata para padrao brasileiro
+        """
+        found_phones = []
+
+        # 1. Buscar em links tel:
+        for link in links:
+            if link.startswith("tel:"):
+                phone = link.replace("tel:", "").strip()
+                phone = self._normalize_phone(phone)
+                if phone:
+                    found_phones.append(phone)
+
+        # 2. Buscar no texto da pagina
+        for pattern in self.PHONE_PATTERNS:
+            matches = re.findall(pattern, text)
+            for phone in matches:
+                phone = self._normalize_phone(phone)
+                if phone:
+                    found_phones.append(phone)
+
+        if not found_phones:
+            return None
+
+        # Remover duplicatas mantendo ordem
+        found_phones = list(dict.fromkeys(found_phones))
+
+        # Priorizar celulares (comecam com 9)
+        for phone in found_phones:
+            digits = re.sub(r'\D', '', phone)
+            # Celular tem 11 digitos e o 5o digito e 9
+            if len(digits) >= 10:
+                if len(digits) == 11 and digits[2] == '9':
+                    return phone
+                elif len(digits) == 10 and digits[2] == '9':
+                    return phone
+
+        return found_phones[0] if found_phones else None
+
+    def _normalize_phone(self, phone: str) -> Optional[str]:
+        """Normaliza telefone para formato padrao"""
+        if not phone:
+            return None
+
+        # Remover caracteres nao numericos exceto +
+        digits = re.sub(r'[^\d+]', '', phone)
+
+        # Remover +55 do inicio se presente
+        if digits.startswith('+55'):
+            digits = digits[3:]
+        elif digits.startswith('55') and len(digits) > 11:
+            digits = digits[2:]
+
+        # Validar tamanho (10 ou 11 digitos para BR)
+        if len(digits) < 10 or len(digits) > 11:
+            return None
+
+        # Formatar: (XX) XXXXX-XXXX ou (XX) XXXX-XXXX
+        if len(digits) == 11:
+            return f"({digits[:2]}) {digits[2:7]}-{digits[7:]}"
+        else:
+            return f"({digits[:2]}) {digits[2:6]}-{digits[6:]}"
 
     def enrich_leads(self, leads: list[Lead]) -> list[Lead]:
         """
